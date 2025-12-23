@@ -1,5 +1,5 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
 import cv2
 import numpy as np
 from tensorflow.keras.models import load_model
@@ -22,10 +22,14 @@ EMOJI_MAP = {
     "happy": "😊", "neutral": "😐", "sad": "😢", "surprise": "😲"
 }
 
-# --- LOGIKA PEMROSESAN VIDEO ---
+# Konfigurasi Server STUN untuk koneksi yang lebih stabil
+RTC_CONFIG = RTCConfiguration(
+    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}]}
+)
+
 class EmotionTransformer(VideoTransformerBase):
     def __init__(self):
-        self.last_emotion = "neutral"
+        self.last_emotion = None # Default kosong agar tidak error
 
     def transform(self, frame):
         img = frame.to_ndarray(format="bgr24")
@@ -41,7 +45,7 @@ class EmotionTransformer(VideoTransformerBase):
             preds = emotion_model.predict(roi, verbose=0)[0]
             self.last_emotion = EMOTIONS[preds.argmax()]
             
-            # Gambar kotak di wajah
+            # Gambar visual di frame
             cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
             cv2.putText(img, self.last_emotion, (x, y - 10), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
@@ -56,15 +60,26 @@ with col1:
     ctx = webrtc_streamer(
         key="emotion-det",
         video_transformer_factory=EmotionTransformer,
-        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+        rtc_configuration=RTC_CONFIG, # Menggunakan config STUN yang lebih lengkap
         media_stream_constraints={"video": True, "audio": False},
     )
 
 with col2:
     st.write("### Status Emosi")
-    if ctx.video_transformer:
+    # Perbaikan: Cek apakah ctx aktif dan video_transformer sudah mengirim data
+    if ctx.video_transformer and ctx.video_transformer.last_emotion is not None:
         current_emo = ctx.video_transformer.last_emotion
-        st.markdown(f"<h1 style='text-align: center; font-size: 150px;'>{EMOJI_MAP[current_emo]}</h1>", unsafe_allow_index=True)
-        st.markdown(f"<h2 style='text-align: center;'>{current_emo.upper()}</h2>", unsafe_allow_index=True)
+        st.markdown(f"<h1 style='text-align: center; font-size: 150px; margin-bottom: 0;'>{EMOJI_MAP[current_emo]}</h1>", unsafe_allow_html=True)
+        st.markdown(f"<h2 style='text-align: center; color: #4CAF50;'>{current_emo.upper()}</h2>", unsafe_allow_html=True)
+        
+        # Tambahan: Tips singkat berdasarkan emosi
+        tips = {
+            "happy": "Pertahankan senyummu! 😊",
+            "sad": "Jangan bersedih, semua akan baik-baik saja. 💙",
+            "angry": "Tarik napas dalam-dalam, mari rileks sejenak. 🧘",
+            "neutral": "Kamu tampak tenang hari ini. ✨"
+        }
+        st.info(tips.get(current_emo, "Sedang menganalisis ekspresimu..."))
     else:
-        st.info("Klik 'Start' untuk menyalakan kamera")
+        st.warning("Menunggu kamera aktif atau wajah terdeteksi...")
+        st.write("Silakan klik **Start** dan pastikan wajah terlihat jelas di kamera.")
