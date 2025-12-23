@@ -85,7 +85,7 @@ with col1:
     # Komponen Streaming Video
     ctx = webrtc_streamer(
         key="emotion-det",
-        video_transformer_factory=EmotionTransformer,
+        video_processor_factory=EmotionTransformer,
         rtc_configuration=RTC_CONFIG, 
         media_stream_constraints={"video": True, "audio": False},
     )
@@ -94,8 +94,8 @@ with col2:
     st.write("### 🎭 Status Emosi")
     
     # Cek apakah kamera sudah aktif dan mengirim data emosi
-    if ctx.video_transformer and ctx.video_transformer.last_emotion is not None:
-        current_emo = ctx.video_transformer.last_emotion
+    if ctx.video_processor and ctx.video_processor.last_emotion is not None:
+        current_emo = ctx.video_processor.last_emotion
         
         # Tampilkan Emoji Raksasa
         st.markdown(
