@@ -10,23 +10,25 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS untuk UI Premium
+# Custom CSS untuk mempercantik progress bar dan card
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; }
-    .stCamera > div { border-radius: 20px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-    .emotion-card {
-        background-color: white; padding: 30px; border-radius: 20px;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.05); text-align: center; border: 1px solid #e1e4e8;
+    .stProgress > div > div > div > div {
+        background-image: linear-gradient(to right, #4facfe 0%, #00f2fe 100%);
     }
-    .confidence-badge {
-        background-color: #e3f2fd; display: inline-block; padding: 5px 20px;
-        border-radius: 50px; color: #1565c0; font-weight: bold; margin-top: 10px;
+    .emotion-label {
+        font-weight: bold;
+        margin-bottom: -15px;
+    }
+    .confidence-text {
+        font-size: 0.85rem;
+        color: #6c757d;
+        text-align: right;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- FUNGSI LOAD MODEL ---
+# --- LOAD MODEL (Cached) ---
 @st.cache_resource
 def load_my_model():
     model = load_model('model_file_30epochs.h5')
@@ -35,15 +37,16 @@ def load_my_model():
 
 emotion_model, face_cascade = load_my_model()
 
-EMOTIONS = ["Marah", "Jijik", "Takut", "Bahagia", "Netral", "Sedih", "Terkejut"]
+# Daftar Label Asli (Sesuai model)
+EMOTIONS_ENG = ["Angry", "Disgust", "Fear", "Happy", "Neutral", "Sad", "Surprise"]
+# Pemetaan ke Bahasa Indonesia untuk Tampilan
 EMOJI_MAP = {
-    "Marah": "😡", "Jijik": "🤢", "Takut": "😨", 
-    "Bahagia": "😊", "Netral": "😐", "Sedih": "😢", "Terkejut": "😲"
+    "Angry": ("Marah", "😡"), "Disgust": ("Jijik", "🤢"), "Fear": ("Takut", "😨"), 
+    "Happy": ("Bahagia", "😊"), "Neutral": ("Netral", "😐"), "Sad": ("Sedih", "😢"), 
+    "Surprise": ("Terkejut", "😲")
 }
 
-# --- HEADER ---
 st.title("🧠 Emosense: Deteksi Emosi Berbasis AI")
-st.markdown("### Analisis ekspresi wajah Anda secara instan dan akurat.")
 st.write("---")
 
 col_left, col_right = st.columns([1, 1], gap="large")
@@ -53,7 +56,7 @@ with col_left:
     img_file = st.camera_input("Posisikan wajah tepat di tengah kamera")
 
 with col_right:
-    st.subheader("📊 Hasil Analisis Persentase")
+    st.subheader("📊 Analisis Probabilitas")
     
     if img_file:
         bytes_data = img_file.getvalue()
@@ -65,37 +68,38 @@ with col_right:
             (x, y, w, h) = faces[0]
             roi = cv2.resize(gray[y:y+h, x:x+w], (48, 48)) / 255.0
             preds = emotion_model.predict(roi.reshape(1, 48, 48, 1), verbose=0)[0]
-            idx = np.argmax(preds)
-            label = EMOTIONS[idx]
-            prob_max = preds[idx] * 100
-
-            # 1. Card Hasil Utama
+            
+            # Menampilkan Emosi Dominan dalam Card
+            idx_max = np.argmax(preds)
+            label_max, emoji_max = EMOJI_MAP[EMOTIONS_ENG[idx_max]]
+            
             st.markdown(f"""
-                <div class="emotion-card">
-                    <h1 style='font-size: 130px; margin: 0;'>{EMOJI_MAP[label]}</h1>
-                    <h2 style='color: #1e88e5; margin-bottom: 5px;'>{label}</h2>
-                    <div class="confidence-badge">Dominan: {prob_max:.2f}%</div>
+                <div style="background-color: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); text-align: center; border: 1px solid #eee;">
+                    <h1 style='font-size: 80px; margin: 0;'>{emoji_max}</h1>
+                    <h2 style='color: #1e88e5; margin: 0;'>{label_max}</h2>
+                    <p style='color: gray;'>Keyakinan: {preds[idx_max]*100:.2f}%</p>
                 </div>
             """, unsafe_allow_html=True)
             
-            st.write("---")
+            st.write("### Detail Probabilitas:")
             
-            # 2. Persentase Real-Time Per Kategori (Progress Bar)
-            st.markdown("#### Detail Persentase Emosi:")
-            for i in range(len(EMOTIONS)):
-                score = float(preds[i])
-                col_name, col_bar = st.columns([1, 3])
-                with col_name:
-                    st.write(f"{EMOJI_MAP[EMOTIONS[i]]} {EMOTIONS[i]}")
-                with col_bar:
-                    # Menampilkan progress bar dan persentase di sampingnya
-                    st.progress(score)
-                    st.caption(f"{score*100:.2f}%")
-
+            # --- BAGIAN PROGRESS BAR (Seperti di Gambar) ---
+            for i, score in enumerate(preds):
+                label_indo, emoji = EMOJI_MAP[EMOTIONS_ENG[i]]
+                
+                # Baris Label dan Persentase
+                c1, c2 = st.columns([1, 1])
+                with c1:
+                    st.markdown(f"<p class='emotion-label'>{emoji} {label_indo}</p>", unsafe_allow_html=True)
+                with c2:
+                    st.markdown(f"<p class='confidence-text'>{score*100:.1f}%</p>", unsafe_allow_html=True)
+                
+                # Progress Bar Streamlit
+                st.progress(float(score))
         else:
-            st.error("⚠️ Wajah tidak terdeteksi. Coba ambil foto lagi.")
+            st.warning("⚠️ Wajah tidak terdeteksi. Silakan coba lagi.")
     else:
-        st.info("Silakan ambil foto untuk melihat rincian persentase emosi.")
+        st.info("Menunggu foto diambil untuk memulai analisis...")
 
 st.divider()
-st.caption("Powered by Streamlit | OpenCV | TensorFlow")
+st.caption("Emosense Stable Build v2.0")
