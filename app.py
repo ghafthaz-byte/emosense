@@ -88,6 +88,7 @@ with col1:
         video_processor_factory=EmotionTransformer,
         rtc_configuration=RTC_CONFIG, 
         media_stream_constraints={"video": True, "audio": False},
+        async_processing=True, # Menjalankan pemrosesan secara asinkron agar UI tidak freeze
     )
 
 with col2:
