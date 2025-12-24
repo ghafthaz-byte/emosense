@@ -3,37 +3,40 @@ import cv2
 import numpy as np
 from tensorflow.keras.models import load_model
 
-# --- KONFIGURASI TAMPILAN ---
+# --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="Emosense - Multi-Face AI",
-    page_icon="👥",
+    page_title="Emosense Ultimate - Multi-Face AI",
+    page_icon="🧠",
     layout="wide"
 )
 
-# Custom CSS untuk UI yang lebih dinamis
+# Custom CSS untuk tampilan premium
 st.markdown("""
     <style>
+    .main { background-color: #f0f2f6; }
     .stProgress > div > div > div > div {
-        background-image: linear-gradient(to right, #6a11cb 0%, #2575fc 100%);
+        background-image: linear-gradient(to right, #1e88e5 0%, #00d4ff 100%);
     }
-    .face-header {
-        background-color: #f0f2f6;
-        padding: 10px;
-        border-radius: 10px;
+    .face-card {
+        background-color: white; padding: 20px; border-radius: 15px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.05); border-left: 5px solid #1e88e5;
         margin-bottom: 20px;
-        border-left: 5px solid #2575fc;
+    }
+    .group-card {
+        background-color: #e3f2fd; padding: 20px; border-radius: 15px;
+        border: 1px solid #bbdefb; text-align: center;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- LOAD MODEL (Cached) ---
+# --- FUNGSI LOAD MODEL & ASSETS ---
 @st.cache_resource
-def load_my_model():
+def load_assets():
     model = load_model('model_file_30epochs.h5')
     cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
     return model, cascade
 
-emotion_model, face_cascade = load_my_model()
+emotion_model, face_cascade = load_assets()
 
 EMOTIONS_ENG = ["Angry", "Disgust", "Fear", "Happy", "Neutral", "Sad", "Surprise"]
 EMOJI_MAP = {
@@ -42,74 +45,103 @@ EMOJI_MAP = {
     "Surprise": ("Terkejut", "😲")
 }
 
-st.title("👥 Emosense: Multi-Face Emotion AI")
-st.markdown("Aplikasi ini sekarang dapat mendeteksi **banyak wajah sekaligus** dalam satu foto.")
+# --- FUNGSI PEMBANTU ---
+def enhance_image(gray_img):
+    """Meningkatkan kontras gambar agar fitur wajah lebih jelas (CLAHE)."""
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    return clahe.apply(gray_img)
+
+# --- HEADER ---
+st.title("🧠 Emosense Ultimate: Multi-Face AI")
+st.markdown("Deteksi emosi kelompok dengan teknologi **Auto-Enhance** dan **Sentimen Analisis**.")
 st.write("---")
 
 col_left, col_right = st.columns([1, 1], gap="large")
 
 with col_left:
-    st.subheader("📸 Ambil Foto Grup")
-    img_file = st.camera_input("Pastikan semua wajah menghadap ke kamera")
+    st.subheader("📸 Input Kamera")
+    img_file = st.camera_input("Ambil foto (bisa sendiri atau grup)")
+    
+    with st.expander("🛠️ Fitur Tersemat"):
+        st.write("- **Auto-Enhance**: Optimasi cahaya otomatis.")
+        st.write("- **Multi-Face**: Analisis hingga banyak wajah sekaligus.")
+        st.write("- **Group Mood**: Statistik perasaan kelompok.")
 
 with col_right:
-    st.subheader("📊 Hasil Analisis Wajah")
+    st.subheader("📊 Analisis Hasil")
     
     if img_file:
         bytes_data = img_file.getvalue()
         img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-        img_draw = img.copy() # Untuk menggambar kotak wajah
+        img_draw = img.copy()
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # Deteksi semua wajah yang ada
+        # Deteksi Wajah
         faces = face_cascade.detectMultiScale(gray, 1.1, 5)
 
         if len(faces) > 0:
-            st.success(f"Berhasil mendeteksi {len(faces)} wajah!")
+            all_preds = []
+            st.success(f"Berhasil menganalisis {len(faces)} wajah")
             
-            # Buat tab untuk setiap wajah agar tidak berantakan
-            face_tabs = st.tabs([f"Wajah #{i+1}" for i in range(len(faces))])
+            # Buat Tab untuk setiap wajah
+            tabs = st.tabs([f"Wajah #{i+1}" for i in range(len(faces))])
 
             for i, (x, y, w, h) in enumerate(faces):
-                with face_tabs[i]:
-                    # Beri label nomor pada gambar asli (opsional)
-                    cv2.rectangle(img_draw, (x, y), (x+w, y+h), (255, 0, 0), 2)
-                    cv2.putText(img_draw, f"#{i+1}", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
-                    
-                    # Crop wajah untuk prediksi
-                    roi = cv2.resize(gray[y:y+h, x:x+w], (48, 48)) / 255.0
-                    preds = emotion_model.predict(roi.reshape(1, 48, 48, 1), verbose=0)[0]
-                    
-                    idx_max = np.argmax(preds)
-                    label_max, emoji_max = EMOJI_MAP[EMOTIONS_ENG[idx_max]]
+                # 1. Preprocessing (Crop + Enhance)
+                roi_gray = gray[y:y+h, x:x+w]
+                roi_enhanced = enhance_image(roi_gray)
+                roi_resized = cv2.resize(roi_enhanced, (48, 48)) / 255.0
+                
+                # 2. Prediksi
+                preds = emotion_model.predict(roi_resized.reshape(1, 48, 48, 1), verbose=0)[0]
+                all_preds.append(preds)
+                
+                idx_max = np.argmax(preds)
+                label_indo, emoji = EMOJI_MAP[EMOTIONS_ENG[idx_max]]
 
-                    # Header Ringkasan Wajah
+                # 3. Gambar Kotak di Gambar Utama
+                cv2.rectangle(img_draw, (x, y), (x+w, y+h), (30, 136, 229), 3)
+                cv2.putText(img_draw, f"#{i+1}", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (30, 136, 229), 2)
+
+                # 4. Tampilan di Tab
+                with tabs[i]:
                     st.markdown(f"""
-                        <div class="face-header">
-                            <h3>{emoji_max} Wajah #{i+1}: {label_max}</h3>
-                            <p>Keyakinan Tertinggi: {preds[idx_max]*100:.2f}%</p>
+                        <div class="face-card">
+                            <h3>{emoji} Wajah #{i+1}: {label_indo}</h3>
+                            <p>Keyakinan: {preds[idx_max]*100:.2f}%</p>
                         </div>
                     """, unsafe_allow_html=True)
-
-                    # Detail Probabilitas
-                    st.write("**Detail Emosi:**")
+                    
                     for j, score in enumerate(preds):
-                        label_indo, emoji = EMOJI_MAP[EMOTIONS_ENG[j]]
+                        l_indo, emo = EMOJI_MAP[EMOTIONS_ENG[j]]
                         c1, c2 = st.columns([1, 4])
-                        with c1:
-                            st.write(f"{emoji} {label_indo}")
-                        with c2:
+                        with c1: st.write(f"{emo} {l_indo}")
+                        with c2: 
                             st.progress(float(score))
                             st.caption(f"{score*100:.1f}%")
-            
-            # Tampilkan gambar dengan kotak deteksi di bawah tab
+
+            # --- FITUR ANALISIS KELOMPOK (Jika > 1 wajah) ---
+            if len(faces) > 1:
+                st.divider()
+                st.subheader("👨‍👩‍👧‍👦 Ringkasan Mood Kelompok")
+                avg_preds = np.mean(all_preds, axis=0)
+                group_idx = np.argmax(avg_preds)
+                g_label, g_emoji = EMOJI_MAP[EMOTIONS_ENG[group_idx]]
+                
+                st.markdown(f"""
+                    <div class="group-card">
+                        <h1 style='font-size: 60px; margin:0;'>{g_emoji}</h1>
+                        <h3>Mood Dominan: {g_label}</h3>
+                        <p>Secara keseluruhan, kelompok Anda terlihat <b>{g_label}</b>.</p>
+                    </div>
+                """, unsafe_allow_html=True)
+
             st.divider()
-            st.image(img_draw, channels="BGR", caption="Peta Deteksi Wajah", use_container_width=True)
-            
+            st.image(img_draw, channels="BGR", caption="Hasil Deteksi Wajah", use_container_width=True)
         else:
-            st.warning("⚠️ Tidak ada wajah yang terdeteksi. Coba posisi atau pencahayaan lain.")
+            st.warning("Wajah tidak terdeteksi. Pastikan pencahayaan cukup.")
     else:
-        st.info("Ambil foto untuk memulai analisis multi-wajah.")
+        st.info("Silakan ambil foto untuk memulai.")
 
 st.divider()
-st.caption("Emosense Stable Build v3.0 | Multi-Face Ready")
+st.caption("Emosense Ultimate Edition v4.0 | 2025")
