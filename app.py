@@ -3,76 +3,101 @@ import cv2
 import numpy as np
 from tensorflow.keras.models import load_model
 
-# --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="Emosense Pro", layout="wide")
-st.title("😊 Emosense: Emotion Detector")
-st.markdown("Ambil foto wajahmu untuk menganalisis emosi secara akurat.")
+# --- KONFIGURASI TAMPILAN ---
+st.set_page_config(
+    page_title="Emosense - AI Emotion Detector",
+    page_icon="😊",
+    layout="wide"
+)
 
-# --- LOAD MODEL (Cached) ---
+# Custom CSS untuk mempercantik UI
+st.markdown("""
+    <style>
+    .main {
+        background-color: #f5f7f9;
+    }
+    .stButton>button {
+        width: 100%;
+        border-radius: 20px;
+    }
+    .emotion-card {
+        padding: 20px;
+        border-radius: 15px;
+        background-color: white;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        text-align: center;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- FUNGSI LOAD MODEL ---
 @st.cache_resource
 def load_my_model():
-    # Pastikan file ini ada di root folder GitHub kamu
     model = load_model('model_file_30epochs.h5')
     cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
     return model, cascade
 
 emotion_model, face_cascade = load_my_model()
-EMOTIONS = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
+EMOTIONS = ["Marah", "Jijik", "Takut", "Bahagia", "Netral", "Sedih", "Terkejut"]
 EMOJI_MAP = {
-    "angry": "😡", "disgust": "🤢", "fear": "😨", 
-    "happy": "😊", "neutral": "😐", "sad": "😢", "surprise": "😲"
+    "Marah": "😡", "Jijik": "🤢", "Takut": "😨", 
+    "Bahagia": "😊", "Netral": "😐", "Sedih": "😢", "Terkejut": "😲"
 }
 
-# --- INPUT KAMERA ---
-img_file = st.camera_input("Klik tombol di bawah untuk mengambil foto")
+# --- HEADER ---
+st.title("🧠 Emosense: Deteksi Emosi Berbasis AI")
+st.markdown("### Temukan perasaanmu hanya dalam satu jepretan foto!")
+st.divider()
 
-if img_file:
-    # Konversi file gambar ke format OpenCV
-    bytes_data = img_file.getvalue()
-    img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+# --- LAYOUT UTAMA ---
+col_cam, col_res = st.columns([1, 1], gap="large")
+
+with col_cam:
+    st.subheader("📸 Ambil Foto")
+    img_file = st.camera_input("Pastikan wajah terlihat jelas dan pencahayaan cukup")
+
+with col_res:
+    st.subheader("📊 Hasil Analisis")
     
-    # Deteksi Wajah
-    faces = face_cascade.detectMultiScale(gray, 1.1, 5)
+    if img_file:
+        # Proses Gambar
+        bytes_data = img_file.getvalue()
+        img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray, 1.1, 5)
 
-    if len(faces) > 0:
-        st.divider()
-        col1, col2 = st.columns([1, 1])
-        
-        # Ambil wajah pertama yang terdeteksi
-        (x, y, w, h) = faces[0]
-        roi = gray[y:y+h, x:x+w]
-        roi = cv2.resize(roi, (48, 48), interpolation=cv2.INTER_AREA)
-        roi = roi.astype('float') / 255.0
-        roi = np.reshape(roi, (1, 48, 48, 1))
+        if len(faces) > 0:
+            # Prediksi
+            (x, y, w, h) = faces[0]
+            roi = cv2.resize(gray[y:y+h, x:x+w], (48, 48)) / 255.0
+            preds = emotion_model.predict(roi.reshape(1, 48, 48, 1), verbose=0)[0]
+            idx = np.argmax(preds)
+            label = EMOTIONS[idx]
+            prob = preds[idx] * 100
 
-        # Prediksi
-        preds = emotion_model.predict(roi, verbose=0)[0]
-        label = EMOTIONS[preds.argmax()]
-        prob = max(preds) * 100
-
-        with col1:
-            st.image(img, channels="BGR", caption="Wajah Terdeteksi", use_container_width=True)
-        
-        with col2:
-            st.markdown(f"<h1 style='text-align: center; font-size: 150px; margin-bottom: 0;'>{EMOJI_MAP[label]}</h1>", unsafe_allow_html=True)
-            st.markdown(f"<h2 style='text-align: center; color: #4CAF50;'>{label.upper()} ({prob:.2f}%)</h2>", unsafe_allow_html=True)
+            # Tampilan Emoji dan Label Besar
+            st.markdown(f"""
+                <div class="emotion-card">
+                    <h1 style='font-size: 120px; margin: 0;'>{EMOJI_MAP[label]}</h1>
+                    <h2 style='color: #2E86C1;'>{label}</h2>
+                    <p style='font-size: 18px; color: gray;'>Tingkat Keyakinan: {prob:.2f}%</p>
+                </div>
+            """, unsafe_allow_html=True)
             
-            # Tampilkan Grafik Probabilitas
-            st.write("### Analisis Detail:")
-            chart_data = {emo: float(p) for emo, p in zip(EMOTIONS, preds)}
-            st.bar_chart(chart_data)
+            st.write("#### Skor Probabilitas Lengkap:")
+            # Grafik Bar yang cantik
+            chart_dict = {EMOTIONS[i]: float(preds[i]) for i in range(len(EMOTIONS))}
+            st.bar_chart(chart_dict)
             
-            # Tips Berdasarkan Emosi
-            tips = {
-                "happy": "Teruslah tersenyum! Hari ini milikmu. ✨",
-                "sad": "Tidak apa-apa merasa sedih. Semuanya akan membaik. 💙",
-                "angry": "Tarik napas dalam-dalam, mari rileks sejenak. 🧘",
-                "neutral": "Tetap tenang dan fokus. Kamu luar biasa! 🕊️"
-            }
-            st.info(tips.get(label, "Analisis ekspresi berhasil diselesaikan."))
+        else:
+            st.warning("⚠️ Wajah tidak terdeteksi. Silakan coba ambil foto lagi dengan posisi wajah tegak ke kamera.")
     else:
-        st.error("Wajah tidak terdeteksi. Pastikan pencahayaan cukup dan wajah terlihat jelas.")
+        st.info("Menunggu foto diambil... Gunakan modul kamera di sebelah kiri.")
 
+# --- FOOTER ---
 st.markdown("---")
-st.caption("Dibuat dengan Streamlit & CNN Model")
+footer_col1, footer_col2 = st.columns(2)
+with footer_col1:
+    st.caption("Dibuat dengan ❤️ menggunakan Streamlit, OpenCV, dan TensorFlow.")
+with footer_col2:
+    st.markdown("<p style='text-align: right; color: gray;'>© 2025 Emosense Project</p>", unsafe_allow_html=True)
