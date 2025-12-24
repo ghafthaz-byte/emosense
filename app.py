@@ -10,26 +10,46 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS untuk tampilan premium
+# Custom CSS untuk Mirror Kamera dan Kontras Teks
 st.markdown("""
     <style>
-    .main { background-color: #f0f2f6; }
-    .stProgress > div > div > div > div {
-        background-image: linear-gradient(to right, #1e88e5 0%, #00d4ff 100%);
+    /* Mirroring Kamera */
+    video {
+        transform: scaleX(-1);
     }
+    
+    /* Memastikan teks terbaca di Light/Dark Mode */
     .face-card {
-        background-color: white; padding: 20px; border-radius: 15px;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.05); border-left: 5px solid #1e88e5;
+        background-color: #ffffff; 
+        padding: 20px; 
+        border-radius: 15px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.1); 
+        border-left: 5px solid #1e88e5;
         margin-bottom: 20px;
+        color: #1a1a1a; /* Warna teks gelap agar terlihat di mode putih */
     }
+    
+    .face-card h3 {
+        color: #1e88e5 !important;
+    }
+
     .group-card {
-        background-color: #e3f2fd; padding: 20px; border-radius: 15px;
-        border: 1px solid #bbdefb; text-align: center;
+        background-color: #f0f7ff; 
+        padding: 20px; 
+        border-radius: 15px;
+        border: 1px solid #bbdefb; 
+        text-align: center;
+        color: #1a1a1a;
+    }
+
+    /* Memperbaiki warna teks caption dan subheader agar adaptif */
+    .stMarkdown p, .stMarkdown h3 {
+        color: inherit;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- FUNGSI LOAD MODEL & ASSETS ---
+# --- FUNGSI LOAD ASSETS ---
 @st.cache_resource
 def load_assets():
     model = load_model('model_file_30epochs.h5')
@@ -45,9 +65,7 @@ EMOJI_MAP = {
     "Surprise": ("Terkejut", "😲")
 }
 
-# --- FUNGSI PEMBANTU ---
 def enhance_image(gray_img):
-    """Meningkatkan kontras gambar agar fitur wajah lebih jelas (CLAHE)."""
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
     return clahe.apply(gray_img)
 
@@ -59,56 +77,47 @@ st.write("---")
 col_left, col_right = st.columns([1, 1], gap="large")
 
 with col_left:
-    st.subheader("📸 Input Kamera")
-    img_file = st.camera_input("Ambil foto (bisa sendiri atau grup)")
+    st.subheader("📸 Input Kamera (Mode Cermin)")
+    img_file = st.camera_input("Ambil foto")
     
-    with st.expander("🛠️ Fitur Tersemat"):
-        st.write("- **Auto-Enhance**: Optimasi cahaya otomatis.")
-        st.write("- **Multi-Face**: Analisis hingga banyak wajah sekaligus.")
-        st.write("- **Group Mood**: Statistik perasaan kelompok.")
-
 with col_right:
     st.subheader("📊 Analisis Hasil")
     
     if img_file:
         bytes_data = img_file.getvalue()
         img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+        # Karena kamera dimirror di UI, kita harus flip gambarnya agar hasil kotak sesuai
+        img = cv2.flip(img, 1) 
+        
         img_draw = img.copy()
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
-        # Deteksi Wajah
         faces = face_cascade.detectMultiScale(gray, 1.1, 5)
 
         if len(faces) > 0:
             all_preds = []
             st.success(f"Berhasil menganalisis {len(faces)} wajah")
             
-            # Buat Tab untuk setiap wajah
             tabs = st.tabs([f"Wajah #{i+1}" for i in range(len(faces))])
 
             for i, (x, y, w, h) in enumerate(faces):
-                # 1. Preprocessing (Crop + Enhance)
                 roi_gray = gray[y:y+h, x:x+w]
                 roi_enhanced = enhance_image(roi_gray)
                 roi_resized = cv2.resize(roi_enhanced, (48, 48)) / 255.0
                 
-                # 2. Prediksi
                 preds = emotion_model.predict(roi_resized.reshape(1, 48, 48, 1), verbose=0)[0]
                 all_preds.append(preds)
                 
                 idx_max = np.argmax(preds)
                 label_indo, emoji = EMOJI_MAP[EMOTIONS_ENG[idx_max]]
 
-                # 3. Gambar Kotak di Gambar Utama
                 cv2.rectangle(img_draw, (x, y), (x+w, y+h), (30, 136, 229), 3)
                 cv2.putText(img_draw, f"#{i+1}", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (30, 136, 229), 2)
 
-                # 4. Tampilan di Tab
                 with tabs[i]:
                     st.markdown(f"""
                         <div class="face-card">
                             <h3>{emoji} Wajah #{i+1}: {label_indo}</h3>
-                            <p>Keyakinan: {preds[idx_max]*100:.2f}%</p>
+                            <p><b>Keyakinan: {preds[idx_max]*100:.2f}%</b></p>
                         </div>
                     """, unsafe_allow_html=True)
                     
@@ -120,7 +129,6 @@ with col_right:
                             st.progress(float(score))
                             st.caption(f"{score*100:.1f}%")
 
-            # --- FITUR ANALISIS KELOMPOK (Jika > 1 wajah) ---
             if len(faces) > 1:
                 st.divider()
                 st.subheader("👨‍👩‍👧‍👦 Ringkasan Mood Kelompok")
@@ -131,17 +139,17 @@ with col_right:
                 st.markdown(f"""
                     <div class="group-card">
                         <h1 style='font-size: 60px; margin:0;'>{g_emoji}</h1>
-                        <h3>Mood Dominan: {g_label}</h3>
+                        <h3 style='color: #1e88e5;'>Mood Dominan: {g_label}</h3>
                         <p>Secara keseluruhan, kelompok Anda terlihat <b>{g_label}</b>.</p>
                     </div>
                 """, unsafe_allow_html=True)
 
             st.divider()
-            st.image(img_draw, channels="BGR", caption="Hasil Deteksi Wajah", use_container_width=True)
+            st.image(img_draw, channels="BGR", caption="Hasil Deteksi Wajah (Flipped to Match Mirror)", use_container_width=True)
         else:
             st.warning("Wajah tidak terdeteksi. Pastikan pencahayaan cukup.")
     else:
         st.info("Silakan ambil foto untuk memulai.")
 
 st.divider()
-st.caption("Emosense Ultimate Edition v4.0 | 2025")
+st.caption("Emosense Ultimate Edition v4.1 | Fix Mirror & Contrast")
