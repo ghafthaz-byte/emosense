@@ -1,77 +1,78 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
 import cv2
 import numpy as np
 from tensorflow.keras.models import load_model
-import av
 
 # --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="Emosense Live Pro", layout="wide")
-st.title("🎥 Real-Time Emotion Detector (Optimized)")
+st.set_page_config(page_title="Emosense Pro", layout="wide")
+st.title("😊 Emosense: Emotion Detector")
+st.markdown("Ambil foto wajahmu untuk menganalisis emosi secara akurat.")
 
 # --- LOAD MODEL (Cached) ---
 @st.cache_resource
 def load_my_model():
+    # Pastikan file ini ada di root folder GitHub kamu
     model = load_model('model_file_30epochs.h5')
     cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
     return model, cascade
 
 emotion_model, face_cascade = load_my_model()
 EMOTIONS = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
-EMOJI_MAP = {"angry": "😡", "disgust": "🤢", "fear": "😨", "happy": "😊", "neutral": "😐", "sad": "😢", "surprise": "😲"}
+EMOJI_MAP = {
+    "angry": "😡", "disgust": "🤢", "fear": "😨", 
+    "happy": "😊", "neutral": "😐", "sad": "😢", "surprise": "😲"
+}
 
-RTC_CONFIG = RTCConfiguration(
-    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"]}]}
-)
+# --- INPUT KAMERA ---
+img_file = st.camera_input("Klik tombol di bawah untuk mengambil foto")
 
-# --- LOGIKA PEMROSESAN VIDEO (DENGAN SKIP FRAME) ---
-class EmotionTransformer(VideoTransformerBase):
-    def __init__(self):
-        self.last_emotion = None
-        self.frame_count = 0 # Counter untuk skip frame
+if img_file:
+    # Konversi file gambar ke format OpenCV
+    bytes_data = img_file.getvalue()
+    img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # Deteksi Wajah
+    faces = face_cascade.detectMultiScale(gray, 1.1, 5)
 
-    def transform(self, frame):
-        self.frame_count += 1
-        img = frame.to_ndarray(format="bgr24")
+    if len(faces) > 0:
+        st.divider()
+        col1, col2 = st.columns([1, 1])
         
-        # HANYA PROSES SETIAP 5 FRAME (Mencegah Server Crash)
-        if self.frame_count % 5 == 0:
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            faces = face_cascade.detectMultiScale(gray, 1.1, 5)
+        # Ambil wajah pertama yang terdeteksi
+        (x, y, w, h) = faces[0]
+        roi = gray[y:y+h, x:x+w]
+        roi = cv2.resize(roi, (48, 48), interpolation=cv2.INTER_AREA)
+        roi = roi.astype('float') / 255.0
+        roi = np.reshape(roi, (1, 48, 48, 1))
 
-            for (x, y, w, h) in faces:
-                roi_gray = gray[y:y + h, x:x + w]
-                roi_gray = cv2.resize(roi_gray, (48, 48), interpolation=cv2.INTER_AREA)
-                roi = roi_gray.astype('float') / 255.0
-                roi = np.reshape(roi, (1, 48, 48, 1))
+        # Prediksi
+        preds = emotion_model.predict(roi, verbose=0)[0]
+        label = EMOTIONS[preds.argmax()]
+        prob = max(preds) * 100
 
-                preds = emotion_model.predict(roi, verbose=0)[0]
-                self.last_emotion = EMOTIONS[preds.argmax()]
-                
-                cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                cv2.putText(img, self.last_emotion, (x, y - 10), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-
-        return img
-
-# --- TAMPILAN UI ---
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    st.write("### Video Feed")
-    ctx = webrtc_streamer(
-        key="emotion-det",
-        video_transformer_factory=EmotionTransformer,
-        rtc_configuration=RTC_CONFIG,
-        media_stream_constraints={"video": True, "audio": False},
-        async_processing=True, # Mencegah UI membeku
-    )
-
-with col2:
-    st.write("### Status Emosi")
-    if ctx.video_transformer and ctx.video_transformer.last_emotion is not None:
-        current_emo = ctx.video_transformer.last_emotion
-        st.markdown(f"<h1 style='text-align: center; font-size: 150px;'>{EMOJI_MAP[current_emo]}</h1>", unsafe_allow_html=True)
-        st.markdown(f"<h2 style='text-align: center;'>{current_emo.upper()}</h2>", unsafe_allow_html=True)
+        with col1:
+            st.image(img, channels="BGR", caption="Wajah Terdeteksi", use_container_width=True)
+        
+        with col2:
+            st.markdown(f"<h1 style='text-align: center; font-size: 150px; margin-bottom: 0;'>{EMOJI_MAP[label]}</h1>", unsafe_allow_html=True)
+            st.markdown(f"<h2 style='text-align: center; color: #4CAF50;'>{label.upper()} ({prob:.2f}%)</h2>", unsafe_allow_html=True)
+            
+            # Tampilkan Grafik Probabilitas
+            st.write("### Analisis Detail:")
+            chart_data = {emo: float(p) for emo, p in zip(EMOTIONS, preds)}
+            st.bar_chart(chart_data)
+            
+            # Tips Berdasarkan Emosi
+            tips = {
+                "happy": "Teruslah tersenyum! Hari ini milikmu. ✨",
+                "sad": "Tidak apa-apa merasa sedih. Semuanya akan membaik. 💙",
+                "angry": "Tarik napas dalam-dalam, mari rileks sejenak. 🧘",
+                "neutral": "Tetap tenang dan fokus. Kamu luar biasa! 🕊️"
+            }
+            st.info(tips.get(label, "Analisis ekspresi berhasil diselesaikan."))
     else:
-        st.warning("Menunggu wajah terdeteksi...")
+        st.error("Wajah tidak terdeteksi. Pastikan pencahayaan cukup dan wajah terlihat jelas.")
+
+st.markdown("---")
+st.caption("Dibuat dengan Streamlit & CNN Model")
