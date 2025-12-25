@@ -3,39 +3,35 @@ import cv2
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.models import load_model
+from streamlit_webrtc import webrtc_streamer, RTCConfiguration, VideoProcessorBase
 
-# --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="Emosense Ultimate", page_icon="🧠", layout="wide")
+# --- 1. KONFIGURASI HALAMAN ---
+st.set_page_config(
+    page_title="Emosense Real-Time AI",
+    page_icon="🧠",
+    layout="wide"
+)
 
-# Custom CSS untuk Kontras Teks dan Progress Bar
-st.markdown("""
-    <style>
-    .face-card {
-        background-color: #ffffff !important; padding: 20px; border-radius: 15px;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.15); border-left: 5px solid #1e88e5;
-        margin-bottom: 20px; color: #1a1a1a !important;
-    }
-    .face-card h3, .face-card p, .face-card b { color: #1a1a1a !important; }
-    .group-card {
-        background-color: #f0f7ff !important; padding: 20px; border-radius: 15px;
-        border: 2px solid #bbdefb; text-align: center; color: #1a1a1a !important;
-    }
-    .stProgress > div > div > div > div {
-        background-image: linear-gradient(to right, #1e88e5 0%, #00d4ff 100%);
-    }
-    video { transform: scaleX(-1); } /* Mirror Preview */
-    </style>
-    """, unsafe_allow_html=True)
+# Konfigurasi server untuk koneksi WebRTC (Penting untuk Cloud Hosting)
+RTC_CONFIG = RTCConfiguration(
+    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+)
 
-# --- LOAD ASSETS (Optimasi Memori) ---
+# --- 2. LOAD ASSETS (Optimasi Cache) ---
 @st.cache_resource
 def load_assets():
-    model = load_model('model_file_30epochs.h5', compile=False)
-    cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
-    return model, cascade
+    try:
+        # Load model tanpa compile untuk menghemat memori
+        model = load_model('model_file_30epochs.h5', compile=False)
+        cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
+        return model, cascade
+    except Exception as e:
+        st.error(f"Error loading assets: {e}")
+        return None, None
 
 emotion_model, face_cascade = load_assets()
 
+# Definisi Emosi
 EMOTIONS_ENG = ["Angry", "Disgust", "Fear", "Happy", "Neutral", "Sad", "Surprise"]
 EMOJI_MAP = {
     "Angry": ("Marah", "😡"), "Disgust": ("Jijik", "🤢"), "Fear": ("Takut", "😨"), 
@@ -43,61 +39,82 @@ EMOJI_MAP = {
     "Surprise": ("Terkejut", "😲")
 }
 
-# --- HEADER ---
-st.title("🧠 Emosense Ultimate: Multi-Face AI")
-st.write("---")
-
-col_left, col_right = st.columns([1, 1], gap="large")
-
-with col_left:
-    st.subheader("📸 Input Kamera")
-    img_file = st.camera_input("Ambil foto untuk analisis")
-    
-with col_right:
-    st.subheader("📊 Analisis Hasil")
-    
-    if img_file:
-        bytes_data = img_file.getvalue()
-        img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
-        img = cv2.flip(img, 1) # Sinkronisasi Mirror
+# --- 3. LOGIKA PEMROSES VIDEO (Real-Time) ---
+class EmotionProcessor(VideoProcessorBase):
+    def recv(self, frame):
+        # Ubah frame ke format ndarray (BGR)
+        img = frame.to_ndarray(format="bgr24")
         
-        img_draw = img.copy()
+        # Mirroring untuk kenyamanan user
+        img = cv2.flip(img, 1)
+        
+        if emotion_model is None:
+            return frame.from_ndarray(img, format="bgr24")
+
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        # Deteksi Wajah (Scale factor 1.3 untuk performa lebih ringan)
         faces = face_cascade.detectMultiScale(gray, 1.3, 5)
 
-        if len(faces) > 0:
-            all_preds = []
-            tabs = st.tabs([f"Wajah #{i+1}" for i in range(len(faces))])
+        for (x, y, w, h) in faces:
+            # Crop area wajah (ROI)
+            roi_gray = gray[y:y+h, x:x+w]
+            roi_resized = cv2.resize(roi_gray, (48, 48)) / 255.0
+            roi_reshaped = np.reshape(roi_resized, (1, 48, 48, 1))
+            
+            # Prediksi Emosi
+            preds = emotion_model.predict(roi_reshaped, verbose=0)[0]
+            idx_max = np.argmax(preds)
+            label_eng = EMOTIONS_ENG[idx_max]
+            emoji = EMOJI_MAP[label_eng][1]
+            accuracy = preds[idx_max] * 100
 
-            for i, (x, y, w, h) in enumerate(faces):
-                roi_gray = gray[y:y+h, x:x+w]
-                roi_resized = cv2.resize(roi_gray, (48, 48)) / 255.0
-                
-                preds = emotion_model.predict(roi_resized.reshape(1, 48, 48, 1), verbose=0)[0]
-                all_preds.append(preds)
-                
-                idx_max = np.argmax(preds)
-                label, emoji = EMOJI_MAP[EMOTIONS_ENG[idx_max]]
+            # Gambar UI di Frame Video
+            color = (30, 136, 229) # Biru Emosense
+            cv2.rectangle(img, (x, y), (x+w, y+h), color, 2)
+            cv2.putText(img, f"{emoji} {label_eng} ({accuracy:.1f}%)", 
+                        (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
-                cv2.rectangle(img_draw, (x, y), (x+w, y+h), (30, 136, 229), 3)
-                cv2.putText(img_draw, f"#{i+1}", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (30, 136, 229), 2)
+        # Kembalikan frame yang sudah diproses
+        return frame.from_ndarray(img, format="bgr24")
 
-                with tabs[i]:
-                    st.markdown(f'<div class="face-card"><h3>{emoji} {label}</h3><p>Akurasi: {preds[idx_max]*100:.1f}%</p></div>', unsafe_allow_html=True)
-                    for j, score in enumerate(preds):
-                        l_indo, emo = EMOJI_MAP[EMOTIONS_ENG[j]]
-                        st.write(f"{emo} {l_indo}")
-                        st.progress(float(score))
+# --- 4. TAMPILAN USER INTERFACE (UI) ---
+st.title("🧠 Emosense Ultimate: Real-Time AI")
+st.markdown("""
+Aplikasi ini mendeteksi emosi wajah secara langsung menggunakan **Deep Learning (CNN)**. 
+Dideploy melalui **Hugging Face Spaces** untuk performa yang lebih stabil.
+""")
 
-            if len(faces) > 1:
-                st.divider()
-                avg_preds = np.mean(all_preds, axis=0)
-                g_label, g_emoji = EMOJI_MAP[EMOTIONS_ENG[np.argmax(avg_preds)]]
-                st.markdown(f'<div class="group-card"><h1>{g_emoji}</h1><h3>Mood Kelompok: {g_label}</h3></div>', unsafe_allow_html=True)
+st.write("---")
 
-            st.divider()
-            st.image(img_draw, channels="BGR", use_container_width=True)
-        else:
-            st.warning("Wajah tidak terdeteksi.")
-    else:
-        st.info("Silakan ambil foto.")
+col_video, col_info = st.columns([2, 1])
+
+with col_video:
+    st.subheader("🎥 Live Feed")
+    # Inisialisasi Streamer
+    webrtc_streamer(
+        key="emotion-realtime",
+        video_processor_factory=EmotionProcessor,
+        rtc_configuration=RTC_CONFIG,
+        media_stream_constraints={"video": True, "audio": False},
+        async_processing=True,
+    )
+
+with col_info:
+    st.subheader("ℹ️ Informasi")
+    st.info("""
+    **Cara Penggunaan:**
+    1. Klik tombol **START** di layar video.
+    2. Berikan izin akses kamera pada browser Anda.
+    3. AI akan secara otomatis mendeteksi wajah dan emosi Anda.
+    """)
+    
+    st.success("""
+    **Keunggulan Versi HF:**
+    - Memori lebih lega (16GB RAM).
+    - Deteksi per frame yang lebih mulus.
+    - Minim risiko 'Segmentation Fault'.
+    """)
+
+st.divider()
+st.caption("Emosense Real-Time v5.1 | Powered by Hugging Face & Streamlit")
